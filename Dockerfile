@@ -2,17 +2,17 @@ FROM debian:bullseye
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Enable 32-bit packages for Wine
+# Enable 32-bit architecture for wine32
 RUN dpkg --add-architecture i386
 
-# Bullseye has moved to Debian's archive mirrors.
-# Disable the archive metadata expiry check.
-RUN sed -i \
-    -e 's|deb.debian.org/debian-security|archive.debian.org/debian-security|g' \
-    -e 's|deb.debian.org/debian|archive.debian.org/debian|g' \
-    /etc/apt/sources.list \
-    && sed -i '/stretch-updates/d' /etc/apt/sources.list \
-    && apt-get update -o Acquire::Check-Valid-Until=false \
+# Replace all Debian mirrors with the Bullseye archive.
+# Remove security/updates entries that can cause 404s.
+RUN printf '%s\n' \
+    'deb [check-valid-until=no] http://archive.debian.org/debian bullseye main contrib non-free' \
+    'deb [check-valid-until=no] http://archive.debian.org/debian bullseye-updates main contrib non-free' \
+    > /etc/apt/sources.list \
+    && rm -f /etc/apt/sources.list.d/* \
+    && apt-get -o Acquire::Check-Valid-Until=false update \
     && apt-get install -y --no-install-recommends \
         xrdp \
         xfce4 \
@@ -33,28 +33,33 @@ RUN sed -i \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Set root password
+# Root password
 RUN echo "root:root" | chpasswd
 
-# Allow Xorg to run for XRDP
-RUN sed -i 's/^allowed_users=.*/allowed_users=anybody/' /etc/X11/Xwrapper.config \
-    || echo "allowed_users=anybody" >> /etc/X11/Xwrapper.config
+# Xorg configuration
+RUN if [ -f /etc/X11/Xwrapper.config ]; then \
+        sed -i 's/^allowed_users=.*/allowed_users=anybody/' /etc/X11/Xwrapper.config; \
+    else \
+        mkdir -p /etc/X11 && \
+        printf 'allowed_users=anybody\n' > /etc/X11/Xwrapper.config; \
+    fi
 
 # XFCE session
-RUN echo "startxfce4" > /root/.xsession \
+RUN printf '%s\n' '#!/bin/sh' 'startxfce4' > /root/.xsession \
     && chmod 700 /root/.xsession
 
-# Generate machine-id for DBus
+# DBus
 RUN mkdir -p /var/run/dbus \
     && dbus-uuidgen > /var/lib/dbus/machine-id
 
-# Configure XRDP
-RUN sed -i 's/crypt_level=high/crypt_level=low/' /etc/xrdp/xrdp.ini \
-    && sed -i 's/security_layer=negotiate/security_layer=rdp/' /etc/xrdp/xrdp.ini \
-    && echo "exec startxfce4" > /etc/xrdp/startwm.sh \
+# XRDP configuration
+RUN sed -i 's/^crypt_level=.*/crypt_level=low/' /etc/xrdp/xrdp.ini \
+    && sed -i 's/^security_layer=.*/security_layer=rdp/' /etc/xrdp/xrdp.ini \
+    && printf '%s\n' '#!/bin/sh' 'unset DBUS_SESSION_BUS_ADDRESS' 'unset XDG_RUNTIME_DIR' 'startxfce4' \
+       > /etc/xrdp/startwm.sh \
     && chmod +x /etc/xrdp/startwm.sh
 
-# Add xrdp to SSL certificate group
+# SSL certificate permissions
 RUN adduser xrdp ssl-cert
 
 # Startup script
